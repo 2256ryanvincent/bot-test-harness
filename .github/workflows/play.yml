@@ -1,0 +1,53 @@
+name: play
+run-name: play ${{ inputs.id }}
+
+# Manual dispatch only: it never runs for a pull request or a push.
+on:
+  workflow_dispatch:
+    inputs:
+      id:
+        description: batch id (16 hex characters)
+        required: true
+        type: string
+
+permissions: {}
+
+jobs:
+  play:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      # The batch is ciphertext. Its key is a one-off repository secret, deleted once the result is collected.
+      - name: Fetch
+        env:
+          ID: ${{ inputs.id }}
+          REPO: ${{ github.repository }}
+        run: |
+          [[ "$ID" =~ ^[0-9a-f]{16}$ ]] || { echo "bad id"; exit 1; }
+          curl -fsSL --retry 5 -o "$RUNNER_TEMP/in.gpg" "https://github.com/$REPO/releases/download/batches/$ID.gpg"
+          echo "fetched"
+
+      # The key is read only inside new network, mount and PID namespaces: loopback only, every plaintext byte in a
+      # private tmpfs that ends with the step. Only the encrypted result leaves. The log shows fixed lines only.
+      - name: Play
+        env:
+          KEY: ${{ secrets[format('K_{0}', inputs.id)] }}
+        run: |
+          sudo --preserve-env=KEY,RUNNER_TEMP unshare --net --mount --pid --fork --mount-proc --propagation private bash -c '
+            set -euo pipefail
+            ip -o link | grep -qv ": lo:" && { echo "network present"; exit 1; }
+            for d in /tmp /var/tmp /dev/shm /root; do mount -t tmpfs -o mode=700 tmpfs "$d"; done
+            export HOME=/root GNUPGHOME=/root/.gnupg
+            mkdir -m 700 /root/.gnupg /var/tmp/job
+            printf %s "$KEY" | gpg --batch --quiet --pinentry-mode loopback --passphrase-fd 0 --decrypt "$RUNNER_TEMP/in.gpg" | tar -x -C /var/tmp/job
+            cd /var/tmp/job && python3 -I run.py > /var/tmp/out.tar 2> /dev/null || true
+            printf %s "$KEY" | gpg --batch --quiet --pinentry-mode loopback --passphrase-fd 0 --symmetric --cipher-algo AES256 -o "$RUNNER_TEMP/out.gpg" /var/tmp/out.tar
+          ' > /dev/null 2>&1 && echo "played" || { echo "failed"; exit 1; }
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: out
+          path: ${{ runner.temp }}/out.gpg
+          retention-days: 1
+          compression-level: 0
+          if-no-files-found: error
