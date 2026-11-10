@@ -17,8 +17,10 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     # One environment a batch, holding that batch's key alone: a job is sent only its own secret, and deleting the
-    # environment deletes the key.
-    environment: b${{ inputs.id }}
+    # environment deletes the key. No deployment record is made.
+    environment:
+      name: b${{ inputs.id }}
+      deployment: false
     steps:
       # The batch is ciphertext. Its key is a one-off secret, deleted once the result is collected.
       - name: Fetch
