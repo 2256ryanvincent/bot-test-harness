@@ -39,7 +39,7 @@ jobs:
         env:
           KEY: ${{ secrets.KEY }}
         run: |
-          sudo --preserve-env=KEY,RUNNER_TEMP unshare --net --mount --pid --fork --mount-proc --propagation private bash -c '
+          sudo --preserve-env=KEY,RUNNER_TEMP unshare --net --mount --pid --ipc --uts --fork --mount-proc --propagation private bash -c '
             set -euo pipefail
             k=$KEY; unset KEY
             [ "$(ip -o link | cut -d" " -f2)" = "lo:" ]
@@ -48,12 +48,12 @@ jobs:
             mount -t tmpfs -o mode=700 tmpfs /root
             export HOME=/root GNUPGHOME=/root/.gnupg
             mkdir -m 700 /root/.gnupg; mkdir /var/tmp/job
-            printf %s "$k" | gpg --batch --quiet --pinentry-mode loopback --passphrase-fd 0 --decrypt "$RUNNER_TEMP/in.gpg" | tar -x -C /var/tmp/job
+            printf %s "$k" | gpg --batch --quiet --no-symkey-cache --pinentry-mode loopback --passphrase-fd 0 --decrypt "$RUNNER_TEMP/in.gpg" | tar -x -C /var/tmp/job
             chown -R 65534:65534 /var/tmp/job
             cd /var/tmp/job
             setpriv --reuid=65534 --regid=65534 --clear-groups --inh-caps=-all --bounding-set=-all --no-new-privs \
               env -i PATH=/usr/bin:/bin HOME=/var/tmp python3 -I run.py > /var/tmp/out.tar 2> /dev/null || true
-            printf %s "$k" | gpg --batch --quiet --pinentry-mode loopback --passphrase-fd 0 --symmetric --cipher-algo AES256 -o "$RUNNER_TEMP/out.gpg" /var/tmp/out.tar
+            printf %s "$k" | gpg --batch --quiet --no-symkey-cache --pinentry-mode loopback --passphrase-fd 0 --symmetric --cipher-algo AES256 -o "$RUNNER_TEMP/out.gpg" /var/tmp/out.tar
           ' > /dev/null 2>&1 && echo "played" || { echo "failed"; exit 1; }
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
